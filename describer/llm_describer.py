@@ -1,20 +1,44 @@
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 import config
 from typing import Dict, List
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 class LLMDescriber:
     def __init__(self):
-        self.client = OpenAI(
-            api_key=config.OPENAI_API_KEY,
-            base_url=config.OPENAI_API_BASE,
-            default_headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {config.OPENAI_API_KEY}"
-            }
-        )
+        try:
+            self.client = OpenAI(
+                api_key=config.GROQ_API_KEY,
+                base_url=config.GROQ_API_BASE,
+                default_headers={
+                    "Content-Type": "application/json"
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
+            raise # Re-raise the exception to be caught in main
+
+    def _call_groq_api(self, prompt: str) -> str:
+        try:
+            logger.debug(f"Sending prompt to Groq: {prompt[:100]}...")
+            response = self.client.chat.completions.create(
+                model=config.GROQ_MODEL,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            content = response.choices[0].message.content.strip()
+            logger.debug(f"Received response from Groq: {content[:100]}...")
+            return content
+        except OpenAIError as e:
+            logger.error(f"Groq API error during description call: {e}")
+            raise # Re-raise the specific OpenAIError
+        except Exception as e:
+            logger.exception("Unexpected error during Groq API call")
+            raise # Re-raise other exceptions
 
     def describe_project(self, analysis_results: Dict[str, str]) -> str:
+        logger.debug("Describing project...")
         prompt = f"""
         Berdasarkan analisis proyek berikut, tulis deskripsi yang komprehensif dan profesional dalam bahasa Indonesia:
         
@@ -33,13 +57,10 @@ class LLMDescriber:
         
         Gunakan bahasa profesional dan pertahankan nada yang teknis namun mudah dipahami.
         """
-        response = self.client.chat.completions.create(
-            model=config.OPENAI_MODEL,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.choices[0].message.content.strip()
+        return self._call_groq_api(prompt)
 
     def describe_module(self, module_path: Path, content: str) -> str:
+        logger.debug(f"Describing module: {module_path.name}")
         prompt = f"""
         Analisis modul Python berikut dan berikan deskripsi yang jelas dalam bahasa Indonesia:
         
@@ -55,13 +76,10 @@ class LLMDescriber:
         
         Pertahankan deskripsi yang ringkas dan profesional.
         """
-        response = self.client.chat.completions.create(
-            model=config.OPENAI_MODEL,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.choices[0].message.content.strip()
+        return self._call_groq_api(prompt)
 
     def describe_directory(self, dir_path: Path, contents: List[Path]) -> str:
+        logger.debug(f"Describing directory: {dir_path.name}")
         prompt = f"""
         Analisis direktori berikut dan isinya dalam bahasa Indonesia:
         
@@ -76,8 +94,4 @@ class LLMDescriber:
         
         Pertahankan deskripsi yang ringkas dan profesional.
         """
-        response = self.client.chat.completions.create(
-            model=config.OPENAI_MODEL,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.choices[0].message.content.strip() 
+        return self._call_groq_api(prompt) 

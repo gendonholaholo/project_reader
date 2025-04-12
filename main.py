@@ -7,69 +7,97 @@ from analyzer.project_analyzer import ProjectAnalyzer
 from describer.llm_describer import LLMDescriber
 from writer.output_writer import OutputWriter
 import config
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def check_api_key():
-    """Check if OpenAI API key is set."""
-    if not config.OPENAI_API_KEY:
-        print("Error: OPENAI_API_KEY environment variable is not set.")
-        print("Please set it using:")
-        print("  export OPENAI_API_KEY='your-api-key-here'  # On Linux/Mac")
-        print("  set OPENAI_API_KEY=your-api-key-here  # On Windows")
+    """Check if Groq API key is set."""
+    if not config.GROQ_API_KEY:
+        logger.error("GROQ_API_KEY environment variable is not set.")
+        logger.error("Please set it using:")
+        logger.error("  export GROQ_API_KEY='your-api-key-here'  # On Linux/Mac")
+        logger.error("  set GROQ_API_KEY=your-api-key-here  # On Windows")
         return False
-    print(f"Using API key: {config.OPENAI_API_KEY[:10]}...")  # Only show first 10 chars for security
-    print(f"Using base URL: {config.OPENAI_API_BASE}")
-    print(f"Using model: {config.OPENAI_MODEL}")
+    logger.info(f"Using API key: {config.GROQ_API_KEY[:10]}...")
+    logger.info(f"Using base URL: {config.GROQ_API_BASE}")
+    logger.info(f"Using model: {config.GROQ_MODEL}")
     return True
 
-def handle_openai_error(e: OpenAIError) -> str:
-    """Handle OpenAI API errors with user-friendly messages."""
-    if "insufficient_quota" in str(e):
-        return """
-Error: OpenAI API quota exceeded.
-Please check your OpenAI account billing and quota at: https://platform.openai.com/account/billing
-Common solutions:
-1. Add a payment method to your OpenAI account
-2. Wait for your quota to reset
-3. Upgrade your OpenAI account plan
+def handle_groq_error(e: OpenAIError) -> str:
+    """Handle Groq API errors with user-friendly messages."""
+    error_message = f"Groq API error: {e}"
+    try:
+        # Try to get structured error details if available
+        error_data = e.response.json().get('error', {})
+        code = error_data.get('code')
+        message = error_data.get('message', str(e)) # Fallback to default message
+
+        if code == 'rate_limit_exceeded':
+            error_message = f"""
+Error: Groq API rate limit exceeded.
+Message: {message}
+Please check your Groq account billing and quota at: https://console.groq.com/settings/billing
 """
-    elif "model_not_found" in str(e):
-        return f"""
-Error: The model '{config.OPENAI_MODEL}' is not available.
-Please modify config.py to use a model you have access to, such as:
-- gpt-3.5-turbo (recommended)
-- gpt-3.5-turbo-16k (for longer texts)
+        elif code == 'model_not_found' or 'decommissioned' in message:
+             error_message = f"""
+Error: The model '{config.GROQ_MODEL}' is not available or decommissioned.
+Message: {message}
+Please check available models or modify config.py.
 """
-    elif "invalid_api_key" in str(e):
-        return """
-Error: Invalid OpenAI API key.
+        elif code == 'invalid_api_key' or e.http_status == 401:
+             error_message = f"""
+Error: Invalid Groq API key.
+Message: {message}
 Please check that your API key is correct and properly set in the environment variable.
 """
-    else:
-        return f"OpenAI API error: {str(e)}"
+        else:
+             error_message = f"Groq API error (Code: {code}): {message}"
+
+    except Exception:
+        # Fallback if parsing error details fails
+        logger.debug("Could not parse structured error details from Groq API response.", exc_info=True)
+        # Use basic string checks as fallback
+        if "insufficient_quota" in str(e) or "rate_limit_exceeded" in str(e):
+            error_message = "Error: Groq API quota exceeded or rate limit reached."
+        elif "model_not_found" in str(e) or "decommissioned" in str(e):
+            error_message = f"Error: The model '{config.GROQ_MODEL}' is not available or decommissioned."
+        elif "invalid_api_key" in str(e) or getattr(e, 'http_status', None) == 401:
+            error_message = "Error: Invalid Groq API key."
+
+    return error_message
 
 def main():
-    # Check OpenAI API key first
+    # Check Groq API key first
     if not check_api_key():
         return
 
-    print("Debug: Starting main function")
-    
+    logger.info("Starting main function")
+
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Analyze a Python project and generate documentation.')
     parser.add_argument('--folder', type=str, required=True, help='Path to the project folder to analyze')
     parser.add_argument('--output', type=str, help='Path to the output file (default: project_analysis.txt)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     args = parser.parse_args()
 
-    print(f"Debug: Analyzing folder: {args.folder}")
-    
+    # Set logging level based on debug flag
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled.")
+
+    logger.info(f"Analyzing folder: {args.folder}")
+
     # Validate input folder
     project_path = Path(args.folder)
     if not project_path.exists() or not project_path.is_dir():
-        print(f"Error: {args.folder} is not a valid directory")
+        logger.error(f"{args.folder} is not a valid directory")
         return
 
     try:
-        print("Debug: Initializing components")
+        logger.info("Initializing components")
         # Initialize components
         file_scanner = FileScanner(project_path)
         project_analyzer = ProjectAnalyzer(file_scanner)
@@ -77,65 +105,77 @@ def main():
         output_writer = OutputWriter(args.output)
 
         # Scan and analyze the project
-        print("Debug: Starting file scan")
+        logger.info("Starting file scan")
         files, directories = file_scanner.scan()
-        print(f"Debug: Found {len(files['python'])} Python files")
-        
-        print("Debug: Starting project analysis")
+        logger.info(f"Found {len(files['python'])} Python files")
+
+        logger.info("Starting project analysis")
         try:
             analysis_results = project_analyzer.analyze_project()
-            print("Debug: Project analysis completed")
+            logger.info("Project analysis completed")
         except OpenAIError as e:
-            print("Debug: OpenAI error during project analysis:")
-            print(handle_openai_error(e))
+            logger.error("Groq error during project analysis:")
+            logger.error(handle_groq_error(e))
             return
         except Exception as e:
-            print(f"Debug: Unexpected error during project analysis: {str(e)}")
-            raise
-        
-        print("Generating project description...")
+            logger.exception("Unexpected error during project analysis") # Logs traceback
+            return # Exit on unexpected analysis error
+
+        logger.info("Generating project description...")
         try:
             description = llm_describer.describe_project(analysis_results)
         except OpenAIError as e:
-            print(handle_openai_error(e))
-            return
-        
-        print("Writing analysis results...")
+            logger.error("Groq error during project description generation:")
+            logger.error(handle_groq_error(e))
+            description = "Error: Could not generate project description due to API error." # Provide fallback
+        except Exception as e:
+             logger.exception("Unexpected error during project description generation")
+             description = "Error: Could not generate project description due to unexpected error."
+
+        logger.info("Writing analysis results...")
         output_writer.write_analysis(analysis_results, description)
-        
+
         # Generate and write module descriptions
-        print("Generating module descriptions...")
+        logger.info("Generating module descriptions...")
         for file in files['python']:
+            logger.debug(f"Analyzing module: {file.name}")
             try:
                 content = file_scanner.get_file_content(file)
                 module_description = llm_describer.describe_module(file, content)
                 output_writer.write_module_description(file, module_description)
             except OpenAIError as e:
-                print(f"\nError analyzing {file.name}:")
-                print(handle_openai_error(e))
-                continue
-        
+                logger.error(f"Error analyzing module {file.name}:")
+                logger.error(handle_groq_error(e))
+                # Continue with the next module
+            except Exception as e:
+                logger.exception(f"Unexpected error analyzing module {file.name}")
+                # Continue with the next module
+
         # Generate and write directory descriptions
-        print("Generating directory descriptions...")
+        logger.info("Generating directory descriptions...")
         for directory in directories:
+             # Ensure directory is not in ignored list before processing
+            if directory.name in config.IGNORED_DIRECTORIES or directory == project_path:
+                 continue
+            logger.debug(f"Analyzing directory: {directory.name}")
             dir_contents = [f for f in files['python'] if f.parent == directory]
             if dir_contents:
                 try:
                     dir_description = llm_describer.describe_directory(directory, dir_contents)
                     output_writer.write_directory_description(directory, dir_description)
                 except OpenAIError as e:
-                    print(f"\nError analyzing directory {directory.name}:")
-                    print(handle_openai_error(e))
-                    continue
-        
-        print(f"\nAnalysis complete! Results written to {output_writer.output_path}")
-        
+                    logger.error(f"Error analyzing directory {directory.name}:")
+                    logger.error(handle_groq_error(e))
+                    # Continue with the next directory
+                except Exception as e:
+                    logger.exception(f"Unexpected error analyzing directory {directory.name}")
+                    # Continue with the next directory
+
+        logger.info(f"Analysis complete! Results written to {output_writer.output_path}")
+
     except Exception as e:
-        if isinstance(e, OpenAIError):
-            print(handle_openai_error(e))
-        else:
-            print(f"Error during analysis: {str(e)}")
-        return
+        # Catch-all for initialization or other unexpected errors
+        logger.exception("An unexpected error occurred during the process") # Use logger.exception to include traceback
 
 if __name__ == "__main__":
     main() 

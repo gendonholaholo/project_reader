@@ -23,7 +23,7 @@ class OutputWriter:
 
         metadata = f"""
 Dibuat pada: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-Model Analisis: {config.OPENAI_MODEL}
+Model Analisis: {config.GROQ_MODEL}
 """
         output = metadata + output
 

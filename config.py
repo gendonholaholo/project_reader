@@ -1,16 +1,20 @@
 import os
 from typing import Dict, Any
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 from pathlib import Path
 
 # Load environment variables from .env file
-env_path = Path(__file__).parent / '.env'
-load_dotenv(dotenv_path=env_path)
+env_path = Path.cwd() / '.env'
+print(f"Loading .env from: {env_path}")
 
-# OpenAI API Configuration
-OPENAI_API_KEY = "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"  # Groq API key
-OPENAI_MODEL = "llama-3.3-70b-versatile"  # Using Groq's LLaMA model
-OPENAI_API_BASE = "https://api.groq.com/openai/v1"  # Groq API endpoint
+env_values = dotenv_values(env_path)
+GROQ_API_KEY = env_values.get('GROQ_API_KEY')
+GROQ_MODEL = env_values.get('GROQ_MODEL', 'deepseek-r1-distill-llama-70b')
+GROQ_API_BASE = env_values.get('GROQ_API_BASE', 'https://api.groq.com/openai/v1/chat/completions')
+
+print(f"\nAPI Key loaded: {GROQ_API_KEY[:10]}..." if GROQ_API_KEY else "No API Key loaded!")
+print(f"Model loaded: {GROQ_MODEL}")
+print(f"API Base loaded: {GROQ_API_BASE}")
 
 # Analysis Configuration
 DEFAULT_OUTPUT_FILE = "project_analysis.txt"
